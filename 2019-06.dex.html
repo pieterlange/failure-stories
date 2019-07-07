@@ -1,0 +1,207 @@
+<!doctype html>
+<html>
+  <head>
+    <!-- Use with reveal.js 3.8.0 -->
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+    <title>A kubernetes failure story (#1 - dex)</title>
+
+    <link rel="stylesheet" href="reveal.js-3.8.0/css/reveal.css">
+    <link rel="stylesheet" href="reveal.js-3.8.0/css/theme/black.css">
+    <link rel="stylesheet" href="css/custom.css">
+
+    <!-- Theme used for syntax highlighting of code -->
+    <link rel="stylesheet" href="reveal.js-3.8.0/lib/css/zenburn.css">
+
+    <!-- Printing and PDF exports -->
+    <script>
+      var link = document.createElement( 'link' );
+      link.rel = 'stylesheet';
+      link.type = 'text/css';
+      link.href = window.location.search.match( /print-pdf/gi ) ? 'reveal.js-3.8.0/css/print/pdf.css' : 'reveal.js-3.8.0/css/print/paper.css';
+      document.getElementsByTagName( 'head' )[0].appendChild( link );
+    </script>
+  </head>
+  <body>
+    <div class="reveal">
+      <div class="slides" >
+        <section>
+          <section>
+            <h1>A kubernetes failure story (#1)</h1>
+            <p/>
+              <img src="img/k8s.png" style="border:none; background:none;width:25%;"/>
+              <img src="img/dex.png" style="border:none; background:none;width:25%;"/><br/>
+          </section>
+          <section>
+            <h3># whoami</h3>
+            <div id="left">
+              <ul>
+                <li>Pieter Lange</li>
+                <li>IT infrastructure technician</li>
+                <li>p.lange@fullstaq.com</li>
+                <li><a href="https://github.com/pieterlange/">github.com/pieterlange</a></li>
+                <li class="fragment" style="font-family: 'Lucida Console', Monaco, monospace;">eat, sleep, <img src="img/k8sparty.gif" style="border:none; background:none;width:10%;"/>, repeat</li>
+              </ul>
+            </div>
+            <div id="right">
+              <img src="img/profile.jpg" style="border:none; background:none;width:60%;"/><br/>
+            </div>
+          </section>
+          <section>
+            <a href="https://www.meetup.com/Kubernetes-Addicts-Support-Group/">kubernetes addicts support group</a><br/>
+            <img src="img/k8saddicts.jpg" style="border:none; background:none;width:50%;"/><br/>
+            <a href="https://k8s.af" class="fragment">k8s.af</a><br/>
+          </section>
+        </section>
+        <section>
+          <section>
+            <h2>The setting</h2>
+            <p>Kubernetes authentication</p>
+            <ul>
+              <li class="fragment">Dex</li>
+              <li class="fragment">OIDC "proxy"</li>
+              <li class="fragment">Storage backends</li>
+            </ul>
+          </section>
+          <section>
+            <h2>Config</h2>
+            <pre>
+              <code data-trim>
+config:
+  storage:
+    type: kubernetes
+    config:
+      inCluster: true
+              </code>
+            </pre>
+          </section>
+
+          <section>
+            <h2>The problem</h2>
+            <p>Bad defaults</p>
+            <ul>
+              <li class="fragment">AKA "stop hitting yourself"</li>
+              <li class="fragment">Insane TTL</li>
+              <li class="fragment">Refreshing dashboards</li>
+              <li class="fragment">Actual security bug</li>
+            </ul>
+          </section>
+          <section data-background="img/perfectstorm.gif">
+          </section>
+          <section data-background="img/authrequest.png">
+          </section>
+          <section>
+            <img src="img/api-slow.png" style="border:none; background:none;width:50%;"/>
+          </section>
+          <section>
+            <h2>Now i got $x AuthRequests</h2>
+            <ul>
+              <li class="fragment">How TF do i clean this up?!</li>
+              <li class="fragment">Listing all authrequests times out</li>
+              <li class="fragment">Kinda need that to delete the resources</li>
+            </ul>
+          </section>
+          <section>
+            <h2>What would you do?</h2>
+            <ol>
+              <li class="fragment">Try to tweak timeouts in etcd/apiserver</li>
+              <li class="fragment">Delete namespace and let k8s clean up for us</li>
+              <li class="fragment">Bypass k8s and delete resources in etcd</li>
+              <li class="fragment">(did i miss any?)</li>
+            </ol>
+          </section>
+          <section>
+            <img src="img/hopingthisworks.jpg" style="border:none; background:none;width:30%;"/>
+          </section>
+          <section>
+            <h2>Whats behind door number two?</h2>
+            <p class="fragment"><img src="img/k8sparty.gif" style="border:none; background:none;width:4%;"/> is magic, The End</p>
+          </section>
+          <section data-background="img/nuke.gif">
+          </section>
+          <section>
+            <h2>Reconciliation loops</h2>
+            <ul>
+              <li class="fragment">List all requests in order to delete</li>
+              <li class="fragment">Timeout</li>
+              <li class="fragment">Repeat</li>
+              <li class="fragment">Masters load spikes to 60</li>
+            </ul>
+					</section>
+          <section data-background="img/nowyoureallyfup.gif">
+          </section>
+          <section>
+            <h2>New situation</h2>
+            <p>Royally screwed</p>
+            <ul>
+              <li class="fragment">Masters down</li>
+              <li class="fragment">Can't access monitoring (no auth, no port-forward)</li>
+              <li class="fragment">Plenty of alerts in slack though..</li>
+            </ul>
+          </section>
+          <section>
+            <h2>Dirty tricks</h2>
+            <pre>
+              <code data-trim>
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dex
+spec:
+  finalizers:
+  - kubernetes
+status:
+  phase: Active
+              </code>
+            </pre>
+					</section>
+          <section>
+            <p>You cant actually remove that finalizer with kubectl</p>
+            <ul>
+              <li class="fragment">Go directly through API and do not pass go</li>
+              <li class="fragment"><a href="https://github.com/ctron/kill-kube-ns">https://github.com/ctron/kill-kube-ns</a></li>
+              <li class="fragment"><b>NEVER DO THIS</b></li>
+            </ul>
+          </section>
+          <section>
+            <h1>NEVER DO THIS</h1>
+          </section>
+          <section>
+            <h2>That "fixed" it</h2>
+            <ul>
+              <li class="fragment">Still left with 0.5G of authrequests in etcd</li>
+              <li class="fragment">Deployed dex to new namespace with SANE DEFAULTS</li>
+              <li class="fragment">Fairly confident <div style="font-family: 'Lucida Console', Monaco, monospace;">kubectl create namespace dex</div> kills the cluster</li>
+              <li class="fragment">Business applications were alive during the event!</li>
+            </ul>
+          </section>
+        </section>
+        <section>
+          <h1>Questions?</h1>
+          <a href="https://www.fullstaq.com"><img src="img/fullstaq.png" style="border:none; background:none;width:60%;"/></a>
+      </div>
+    </div>
+
+    <script src="reveal.js-3.8.0/lib/js/head.min.js"></script>
+    <script src="reveal.js-3.8.0/js/reveal.js"></script>
+
+    <script>
+      // More info https://github.com/hakimel/reveal.js#configuration
+      Reveal.initialize({
+        history: true,
+        width: "90%",
+        margin: 0.05,
+
+        // More info https://github.com/hakimel/reveal.js#dependencies
+        dependencies: [
+          { src: 'reveal.js-3.8.0/plugin/markdown/marked.js' },
+          { src: 'reveal.js-3.8.0/plugin/markdown/markdown.js' },
+          { src: 'reveal.js-3.8.0/plugin/notes/notes.js', async: true },
+          { src: 'reveal.js-3.8.0/plugin/tagcloud/tagcloud.js', async: true },
+          { src: 'reveal.js-3.8.0/plugin/highlight/highlight.js', async: true, callback: function() { hljs.initHighlightingOnLoad(); } }
+        ]
+      });
+    </script>
+  </body>
+</html>
